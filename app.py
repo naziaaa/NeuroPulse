@@ -1,45 +1,46 @@
+import pandas as pd
+import numpy as np
+from ogb.nodeproppred import NodePropPredDataset
 import os
-from dotenv import load_dotenv
-from neo4j import GraphDatabase
 
-# Load environment variables
-load_dotenv()
+# Set dataset storage directory
+DATASET_DIR = "dataset/ogbn_arvix"  # Change as needed
+os.makedirs(DATASET_DIR, exist_ok=True)
 
-# Neo4j connection details from .env file
-URI = os.getenv("NEO4J_URI")
-USERNAME = os.getenv("NEO4J_USERNAME")
-PASSWORD = os.getenv("NEO4J_PASSWORD")
+# Load dataset from local storage
+dataset = NodePropPredDataset(name="ogbn-arxiv", root=DATASET_DIR)
+data = dataset[0]  # Graph object
+edge_index = data[0]['edge_index']  # Citation edges
+node_features = data[0]['node_feat']  # Node features (128D embeddings)
+labels = data[1]  # Research field labels
 
-class Neo4jDemo:
-    def __init__(self, uri, user, password):
-        self.driver = GraphDatabase.driver(uri, auth=(user, password))
+# Create output directory
+OUTPUT_DIR = "neo4j_data"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    def close(self):
-        self.driver.close()
+# Extract paper nodes
+paper_ids = np.arange(node_features.shape[0])
+embeddings = [','.join(map(str, row)) for row in node_features]
+papers_df = pd.DataFrame({
+    'paper_id': paper_ids,
+    'embedding': embeddings,
+    'label': labels.flatten()
+})
+papers_df.to_csv(os.path.join(OUTPUT_DIR, "nodes_papers.csv"), index=False)
 
-    def create_data(self):
-        with self.driver.session() as session:
-            session.run("CREATE (s:Student {name:'Alice'})")
-            session.run("CREATE (s:Student {name:'Bob'})")
-            session.run("CREATE (c:Course {name:'Math'})")
-            session.run("CREATE (c:Course {name:'Physics'})")
-            session.run("""
-                MATCH (s:Student {name:'Alice'}), (c:Course {name:'Math'})
-                CREATE (s)-[:ENROLLED_IN]->(c)
-            """)
-            session.run("""
-                MATCH (s:Student {name:'Bob'}), (c:Course {name:'Physics'})
-                CREATE (s)-[:ENROLLED_IN]->(c)
-            """)
+# Extract citation edges
+edges_df = pd.DataFrame({
+    'source_id': edge_index[0],
+    'target_id': edge_index[1]
+})
+edges_df.to_csv(os.path.join(OUTPUT_DIR, "edges_citations.csv"), index=False)
 
-    def fetch_data(self):
-        with self.driver.session() as session:
-            result = session.run("MATCH (s:Student)-[:ENROLLED_IN]->(c:Course) RETURN s.name, c.name")
-            for record in result:
-                print(f"{record['s.name']} is enrolled in {record['c.name']}")
+# Extract research field labels
+unique_labels = np.unique(labels)
+fields_df = pd.DataFrame({
+    'field_id': unique_labels,
+    'field_name': [f"Field_{i}" for i in unique_labels]
+})
+fields_df.to_csv(os.path.join(OUTPUT_DIR, "nodes_fields.csv"), index=False)
 
-# Run the demo
-neo4j_demo = Neo4jDemo(URI, USERNAME, PASSWORD)
-neo4j_demo.create_data()
-neo4j_demo.fetch_data()
-neo4j_demo.close()
+print("CSV files generated successfully!")
